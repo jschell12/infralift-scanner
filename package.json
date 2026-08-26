@@ -1,0 +1,17 @@
+{
+  "name": "infralift-scanner",
+  "version": "1.0.0",
+  "description": "Community lead scanner for infralift — reads developer forums for cloud migration and billing pain discussions",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
