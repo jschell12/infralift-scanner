@@ -1,19 +1,17 @@
 // Bright Data Reddit Scraper API — keyword discovery for posts + comment collection.
-// Uses the "Discover by keyword" endpoint to find relevant posts across subreddits,
-// then optionally fetches comments on high-engagement matches.
+// Uses async /trigger or sync /scrape with 202 snapshot polling fallback.
 //
 // Pricing: ~$1.50 per 1,000 records. Free tier: 5,000 records/month.
-// Estimated cost with keyword discovery: ~$18/month at 6 scans/day.
 
-const API_BASE = "https://api.brightdata.com/datasets/v3/scrape";
+const API_BASE = "https://api.brightdata.com/datasets/v3";
 const POSTS_DATASET = "gd_lvz8ah06191smkebj4";
 const COMMENTS_DATASET = "gd_lvzdpsdlw09j6t702";
 
 const SEARCH_KEYWORDS = [
-  "cloud bill expensive",
   "vercel pricing",
   "heroku migration",
   "firebase billing",
+  "cloud bill",
   "cloud cost",
   "hosting expensive",
   "self-hosting migration",
@@ -21,10 +19,65 @@ const SEARCH_KEYWORDS = [
   "alternative to heroku",
   "moved from vercel",
   "moved from heroku",
-  "moved from firebase",
   "egress fees",
-  "cloud migration terraform",
+  "cloud migration",
+  "coolify",
 ];
+
+async function fetchWithSnapshot(apiKey, url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  // Sync success
+  if (res.status === 200) {
+    return await res.json();
+  }
+
+  // Async — poll for snapshot
+  if (res.status === 202) {
+    const { snapshot_id } = await res.json();
+    if (!snapshot_id) return [];
+
+    console.log(`    Snapshot ${snapshot_id} — polling...`);
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, 10000)); // 10s between polls
+
+      const poll = await fetch(
+        `${API_BASE}/progress/${snapshot_id}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } }
+      );
+      if (!poll.ok) continue;
+      const status = await poll.json();
+
+      if (status.status === "ready") {
+        const dl = await fetch(
+          `${API_BASE}/snapshot/${snapshot_id}?format=json`,
+          { headers: { Authorization: `Bearer ${apiKey}` } }
+        );
+        if (dl.ok) return await dl.json();
+        return [];
+      }
+
+      if (status.status === "failed") {
+        console.warn(`    Snapshot ${snapshot_id} failed`);
+        return [];
+      }
+    }
+    console.warn(`    Snapshot ${snapshot_id} timed out after 2 min`);
+    return [];
+  }
+
+  // Error
+  const text = await res.text();
+  console.warn(`  Bright Data ${res.status}: ${text.slice(0, 100)}`);
+  return [];
+}
 
 export async function scrapeRedditBrightData(apiKey, since) {
   if (!apiKey) {
@@ -34,36 +87,16 @@ export async function scrapeRedditBrightData(apiKey, since) {
 
   const posts = [];
   const seen = new Set();
-  const sinceDate = since.toISOString().split("T")[0]; // YYYY-MM-DD
 
   // Discover posts by keyword
   for (const keyword of SEARCH_KEYWORDS) {
     try {
-      const res = await fetch(
-        `${API_BASE}?dataset_id=${POSTS_DATASET}&format=json`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify([
-            {
-              keyword,
-              date: sinceDate,
-              num_of_posts: 10,
-            },
-          ]),
-        }
+      const results = await fetchWithSnapshot(
+        apiKey,
+        `${API_BASE}/scrape?dataset_id=${POSTS_DATASET}&format=json&type=discover_new&discover_by=keyword`,
+        [{ keyword, date: "Past hour", num_of_posts: 10 }]
       );
 
-      if (!res.ok) {
-        const text = await res.text();
-        console.warn(`Bright Data keyword "${keyword}": ${res.status} ${text.slice(0, 100)}`);
-        continue;
-      }
-
-      const results = await res.json();
       for (const post of Array.isArray(results) ? results : []) {
         if (!post.post_id || seen.has(post.post_id)) continue;
         seen.add(post.post_id);
@@ -81,16 +114,16 @@ export async function scrapeRedditBrightData(apiKey, since) {
         });
       }
 
-      console.log(`  BD keyword "${keyword}": ${(Array.isArray(results) ? results : []).length} posts`);
+      const count = Array.isArray(results) ? results.length : 0;
+      if (count > 0) console.log(`  BD "${keyword}": ${count} posts`);
 
-      // Rate limit between keyword searches
       await new Promise((r) => setTimeout(r, 1000));
     } catch (err) {
-      console.warn(`Bright Data keyword "${keyword}": ${err.message}`);
+      console.warn(`  BD keyword "${keyword}": ${err.message}`);
     }
   }
 
-  // Fetch comments for top-engagement posts (top 5 by upvotes)
+  // Fetch comments for top-engagement posts (top 5)
   const comments = [];
   const topPosts = [...posts]
     .sort((a, b) => (b.engagementScore ?? 0) - (a.engagementScore ?? 0))
@@ -100,43 +133,30 @@ export async function scrapeRedditBrightData(apiKey, since) {
     if (!post.sourceUrl || post.numComments === 0) continue;
 
     try {
-      const res = await fetch(
-        `${API_BASE}?dataset_id=${COMMENTS_DATASET}&format=json`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify([
-            {
-              url: post.sourceUrl,
-              days_back: 7,
-            },
-          ]),
-        }
+      const results = await fetchWithSnapshot(
+        apiKey,
+        `${API_BASE}/scrape?dataset_id=${COMMENTS_DATASET}&format=json`,
+        [{ url: post.sourceUrl, days_back: 7 }]
       );
 
-      if (!res.ok) continue;
-
-      const results = await res.json();
       for (const comment of Array.isArray(results) ? results : []) {
         comments.push({
           postId: post.sourceId,
           postTitle: post.title,
           sourceUrl: post.sourceUrl,
           commentId: comment.comment_id ?? comment.id,
-          body: (comment.comment_text ?? comment.body ?? "").slice(0, 2000),
-          authorName: comment.user_commented ?? comment.author ?? undefined,
+          body: (comment.comment ?? comment.comment_text ?? "").slice(0, 2000),
+          authorName: comment.user_posted ?? comment.author ?? undefined,
           upvotes: comment.num_upvotes ?? 0,
-          postedAt: comment.date_commented ? new Date(comment.date_commented) : undefined,
+          postedAt: comment.date_posted ? new Date(comment.date_posted) : undefined,
         });
       }
 
-      console.log(`  BD comments for "${post.title.slice(0, 50)}": ${(Array.isArray(results) ? results : []).length}`);
+      const count = Array.isArray(results) ? results.length : 0;
+      if (count > 0) console.log(`  BD comments "${post.title.slice(0, 50)}": ${count}`);
       await new Promise((r) => setTimeout(r, 1000));
     } catch (err) {
-      console.warn(`Bright Data comments: ${err.message}`);
+      console.warn(`  BD comments: ${err.message}`);
     }
   }
 
