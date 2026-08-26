@@ -113,8 +113,9 @@ async function main() {
         totalStored++;
       }
 
-      // Rate limit between communities
-      await new Promise((r) => setTimeout(r, 2000));
+      // Rate limit: Reddit RSS needs longer delays to avoid 429
+      const delay = community.platform === "reddit" ? 10000 : 2000;
+      await new Promise((r) => setTimeout(r, delay));
     } catch (err) {
       console.error(`  ${community.slug} failed: ${err}`);
     }
