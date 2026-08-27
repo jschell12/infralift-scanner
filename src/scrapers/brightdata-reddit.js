@@ -7,21 +7,25 @@ const API_BASE = "https://api.brightdata.com/datasets/v3";
 const POSTS_DATASET = "gd_lvz8ah06191smkebj4";
 const COMMENTS_DATASET = "gd_lvzdpsdlw09j6t702";
 
+// Platform-specific keywords only — avoid generic terms like "cloud cost"
+// that match unrelated posts (e.g. about Claude AI pricing, car costs, etc.)
 const SEARCH_KEYWORDS = [
-  "vercel pricing",
-  "heroku migration",
-  "firebase billing",
-  "cloud bill",
-  "cloud cost",
-  "hosting expensive",
-  "self-hosting migration",
-  "alternative to vercel",
-  "alternative to heroku",
-  "moved from vercel",
-  "moved from heroku",
-  "egress fees",
-  "cloud migration",
-  "coolify",
+  "vercel pricing expensive",
+  "vercel bill surprise",
+  "heroku migration alternative",
+  "heroku too expensive",
+  "firebase billing firestore",
+  "firebase cost surprise",
+  "aws bill NAT gateway",
+  "self-hosting vercel alternative",
+  "self-hosting heroku alternative",
+  "moved from vercel to",
+  "moved from heroku to",
+  "moved from firebase to",
+  "alternative to vercel hosting",
+  "alternative to heroku hosting",
+  "coolify self-host deploy",
+  "hetzner vps migrate",
 ];
 
 async function fetchWithSnapshot(apiKey, url, body) {
